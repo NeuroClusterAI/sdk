@@ -1,38 +1,38 @@
-# Kortix SDK
+# NeuroCluster SDK
 
 [![Python](https://img.shields.io/badge/python-3.11+-blue.svg)](https://python.org)
 
-A Python SDK that enables you to create, manage, and interact with AI Workers on [Suna](https://suna.so).
+A Python SDK that enables you to create, manage, and interact with AI Workers on [Supernova](https://supernova.app).
 
 ## 📦 Installation
 
 Install directly from the GitHub repository:
 
 ```bash
-pip install "kortix @ git+https://github.com/kortix-ai/suna.git@main#subdirectory=sdk"
+pip install "neurocluster @ git+https://github.com/neurocluster/supernova.git@main#subdirectory=sdk"
 ```
 
 Or using uv:
 
 ```bash
-uv add "kortix @ git+https://github.com/kortix-ai/suna.git@main#subdirectory=sdk"
+uv add "neurocluster @ git+https://github.com/neurocluster/supernova.git@main#subdirectory=sdk"
 ```
 
 ## 🔧 Quick Start
 
 ```python
 import asyncio
-from kortix import kortix
+from neurocluster import neurocluster
 
 async def main():
-    mcp_tools = kortix.MCPTools(
+    mcp_tools = neurocluster.MCPTools(
         "http://localhost:4000/mcp/",  # Point to any HTTP MCP server
-        "Kortix",
+        "NeuroCluster",
     )
     await mcp_tools.initialize()
 
     # Initialize the client
-    client = kortix.Kortix(api_key="your-api-key")
+    client = neurocluster.NeuroCluster(api_key="your-api-key")
 
     # Create an agent
     agent = await client.Agent.create(
@@ -59,7 +59,7 @@ if __name__ == "__main__":
 
 ## 🔑 Environment Setup
 
-Get your API key from [https://suna.so/settings/api-keys](https://suna.so/settings/api-keys)
+Get your API key from [https://supernova.app/settings/api-keys](https://supernova.app/settings/api-keys)
 
 ## 🧪 Running Examples
 
