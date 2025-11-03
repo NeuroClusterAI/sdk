@@ -2,7 +2,7 @@
 
 [![Python](https://img.shields.io/badge/python-3.11+-blue.svg)](https://python.org)
 
-A Python SDK that enables you to create, manage, and interact with AI Workers on [Supernova](https://supernova.app).
+A Python SDK that enables you to create, manage, and interact with AI Workers on [NeuroCluster](https://neurocluster.com).
 
 ## 📦 Installation
 
@@ -59,7 +59,7 @@ if __name__ == "__main__":
 
 ## 🔑 Environment Setup
 
-Get your API key from [https://supernova.app/settings/api-keys](https://supernova.app/settings/api-keys)
+Get your API key from [https://app.neurocluster.com/settings/api-keys](https://app.neurocluster.com/settings/api-keys)
 
 ## 🧪 Running Examples
 
