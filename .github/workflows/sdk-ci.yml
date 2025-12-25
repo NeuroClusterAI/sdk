@@ -1,0 +1,97 @@
+name: SDK CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+
+      - name: Enforce version bump for SDK code changes
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [[ "${{ github.event_name }}" == "pull_request" ]]; then
+            BASE_REF="origin/${{ github.base_ref }}"
+            git fetch --no-tags origin "${{ github.base_ref }}:${{ github.base_ref }}" || true
+            RANGE="${BASE_REF}...HEAD"
+          else
+            # push: compare last commit (best-effort)
+            RANGE="HEAD~1...HEAD"
+          fi
+
+          echo "Checking changed files in range: ${RANGE}"
+          CHANGED="$(git diff --name-only ${RANGE} || true)"
+          echo "${CHANGED}"
+
+          # Determine if "SDK code" changed (not just docs/tests)
+          SDK_CODE_CHANGED=0
+          while IFS= read -r f; do
+            [[ -z "${f}" ]] && continue
+
+            # Ignore docs + tests-only changes
+            if [[ "${f}" == tests/* || "${f}" == README.md || "${f}" == CHANGELOG.md || "${f}" == RELEASING.md || "${f}" == VERSIONING.md || "${f}" == TROUBLESHOOTING.md ]]; then
+              continue
+            fi
+
+            # Treat any package code or packaging config as requiring version bump
+            if [[ "${f}" == neurocluster/* || "${f}" == neurocluster/** || "${f}" == pyproject.toml || "${f}" == MANIFEST.in ]]; then
+              SDK_CODE_CHANGED=1
+              break
+            fi
+          done <<< "${CHANGED}"
+
+          if [[ "${SDK_CODE_CHANGED}" -eq 0 ]]; then
+            echo "No SDK code changes detected; version bump not required."
+            exit 0
+          fi
+
+          echo "SDK code changes detected; enforcing version bump in pyproject.toml"
+
+          extract_version() {
+            python3 -c 'import re,sys; data=sys.stdin.read(); m=re.search(r"(?ms)^\\[project\\]\\s*.*?^version\\s*=\\s*\\\"([^\\\"]+)\\\"", data) or re.search(r"(?m)^version\\s*=\\s*\\\"([^\\\"]+)\\\"", data); print(m.group(1) if m else "")'
+          }
+
+          BASE_PYPROJECT=""
+          if git show "${BASE_REF}:pyproject.toml" >/dev/null 2>&1; then
+            BASE_PYPROJECT="$(git show "${BASE_REF}:pyproject.toml")"
+          fi
+          BASE_VERSION="$(printf '%s' "${BASE_PYPROJECT}" | extract_version)"
+          HEAD_VERSION="$(cat pyproject.toml | extract_version)"
+
+          echo "Base version: ${BASE_VERSION}"
+          echo "Head version: ${HEAD_VERSION}"
+
+          if [[ -z "${HEAD_VERSION}" ]]; then
+            echo "::error::Could not read [project].version from pyproject.toml"
+            exit 1
+          fi
+
+          if [[ "${BASE_VERSION}" == "${HEAD_VERSION}" ]]; then
+            echo "::error::SDK code changed but pyproject.toml version did not change (${HEAD_VERSION}). Please bump [project].version."
+            exit 1
+          fi
+
+          echo "Version bump detected: ${BASE_VERSION} -> ${HEAD_VERSION}"
+
+      - name: Install dependencies
+        run: uv sync --group dev
+
+      - name: Run tests
+        run: uv run pytest -q
+
+

@@ -3,7 +3,7 @@
 import asyncio
 import os
 
-from neurocluster import neurocluster
+from neurocluster import NeuroCluster, MCPTools
 from neurocluster.utils import print_stream
 
 
@@ -24,15 +24,15 @@ async def main():
     )
 
     # Create the MCP tools client with the URL of the MCP server that's accessible by the Supernova instance
-    mcp_tools = neurocluster.MCPTools(
+    mcp_tools = MCPTools(
         "http://localhost:4000/mcp/",  # Since we are running Supernova locally, we can use the local URL
         "NeuroCluster",
         allowed_tools=["get_wind_direction"],
     )
     await mcp_tools.initialize()
 
-    neurocluster_client = neurocluster.NeuroCluster(
-        os.getenv("KORTIX_API_KEY", "pk_xxx:sk_xxx"),
+    neurocluster_client = NeuroCluster(
+        os.getenv("NEUROCLUSTER_API_KEY", "pk_xxx:sk_xxx"),
         "http://localhost:8000/api",
     )
 

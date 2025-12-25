@@ -1,5 +1,5 @@
-from dataclasses import dataclass, asdict
-from typing import Optional, List, Dict, Any
+from dataclasses import dataclass
+from typing import Optional, List, Dict, Any, Union
 import httpx
 from datetime import datetime
 
@@ -12,6 +12,9 @@ from ..models import (
     AgentRun,
     ContentObject,
 )
+from ..types import MessageContent
+from .base_client import BaseAPIClient
+from .serialization import to_dict, from_dict as base_from_dict
 
 
 @dataclass
@@ -47,6 +50,7 @@ class AgentStartRequest:
     reasoning_effort: Optional[str] = "low"
     stream: Optional[bool] = True
     enable_context_manager: Optional[bool] = False
+    enable_prompt_caching: Optional[bool] = True
     agent_id: Optional[str] = None
 
 
@@ -90,12 +94,12 @@ class Message:
     thread_id: str
     type: str  # Will map to MessageType enum values
     is_llm_message: bool
-    content: Any  # Can be string, dict, or ContentObject
+    content: MessageContent  # Can be string, dict, or ContentObject
     created_at: str
     updated_at: str
     agent_id: str
     agent_version_id: str
-    metadata: Any
+    metadata: Dict[str, Any]
 
     @property
     def message_type(self) -> MessageType:
@@ -202,58 +206,12 @@ class AgentRunsResponse:
     agent_runs: List[Dict[str, Any]]
 
 
-def to_dict(obj) -> Dict[str, Any]:
-    """Convert dataclass to dictionary, handling nested dataclasses."""
-    if hasattr(obj, "__dataclass_fields__"):
-        return asdict(obj)
-    return obj
+# Use shared serialization utilities
+# Note: threads.py needs to preserve None values in some cases, use to_dict(obj, exclude_none=False)
+from_dict = base_from_dict
 
 
-def from_dict(cls, data: Dict[str, Any]):
-    """Create dataclass instance from dictionary."""
-    if not hasattr(cls, "__dataclass_fields__"):
-        return data
-
-    # Handle nested dataclasses
-    field_types = {
-        field.name: field.type for field in cls.__dataclass_fields__.values()
-    }
-    processed_data = {}
-
-    for key, value in data.items():
-        if key in field_types:
-            field_type = field_types[key]
-
-            # Handle Optional types
-            if hasattr(field_type, "__origin__") and field_type.__origin__ is type(
-                Optional[str].__origin__
-            ):
-                field_type = field_type.__args__[0]
-
-            # Handle List types
-            if hasattr(field_type, "__origin__") and field_type.__origin__ is list:
-                if value is not None and len(value) > 0:
-                    list_type = field_type.__args__[0]
-                    if hasattr(list_type, "__dataclass_fields__"):
-                        processed_data[key] = [
-                            from_dict(list_type, item) for item in value
-                        ]
-                    else:
-                        processed_data[key] = value
-                else:
-                    processed_data[key] = value
-            # Handle nested dataclasses
-            elif hasattr(field_type, "__dataclass_fields__") and value is not None:
-                processed_data[key] = from_dict(field_type, value)
-            else:
-                processed_data[key] = value
-        else:
-            processed_data[key] = value
-
-    return cls(**processed_data)
-
-
-class ThreadsClient:
+class ThreadsClient(BaseAPIClient):
     """Client for interacting with threads APIs."""
 
     def __init__(
@@ -261,7 +219,7 @@ class ThreadsClient:
         base_url: str,
         auth_token: Optional[str] = None,
         custom_headers: Optional[Dict[str, str]] = None,
-        timeout: float = 30.0,
+        timeout: float = 120.0,  # Default timeout is longer for threads
     ):
         """Initialize the threads client.
 
@@ -269,53 +227,9 @@ class ThreadsClient:
             base_url: The base URL for the API
             auth_token: Optional authentication token
             custom_headers: Optional custom headers to include in requests
-            timeout: Request timeout in seconds
+            timeout: Request timeout in seconds (default: 120.0)
         """
-        self.base_url = base_url.rstrip("/")
-        self.timeout = timeout
-
-        # Set up default headers
-        self.headers = {"Content-Type": "application/json"}
-        if auth_token:
-            self.headers["X-API-Key"] = auth_token
-        if custom_headers:
-            self.headers.update(custom_headers)
-
-        # Initialize HTTP client
-        self.client = httpx.AsyncClient(
-            headers=self.headers, timeout=timeout, base_url=self.base_url
-        )
-
-    async def close(self):
-        """Close the HTTP client."""
-        await self.client.aclose()
-
-    async def __aenter__(self):
-        return self
-
-    async def __aexit__(self, exc_type, exc_val, exc_tb):
-        await self.close()
-
-    def _handle_response(self, response: httpx.Response) -> Dict[str, Any]:
-        """Handle HTTP response and raise appropriate exceptions."""
-        if response.status_code == 200:
-            return response.json()
-        elif response.status_code == 201:
-            return response.json()
-        elif response.status_code == 404:
-            raise ValueError(f"Not found: {response.text}")
-        elif response.status_code == 403:
-            raise PermissionError(f"Access denied: {response.text}")
-        elif response.status_code >= 400:
-            try:
-                error_data = response.json()
-                error_message = error_data.get("detail", response.text)
-            except:
-                error_message = response.text
-            raise RuntimeError(f"API error ({response.status_code}): {error_message}")
-        else:
-            response.raise_for_status()
-            return response.json()
+        super().__init__(base_url, auth_token, custom_headers, timeout)
 
     async def get_threads(
         self,
@@ -336,7 +250,7 @@ class ThreadsClient:
             "limit": limit,
         }
 
-        response = await self.client.get("/threads", params=params)
+        response = await self._request_with_retry("GET", "/threads", params=params)
         data = self._handle_response(response)
 
         # Convert threads data
@@ -376,7 +290,7 @@ class ThreadsClient:
         Returns:
             Thread with complete data including project, message count, and recent agent runs
         """
-        response = await self.client.get(f"/threads/{thread_id}")
+        response = await self._request_with_retry("GET", f"/threads/{thread_id}")
         data = self._handle_response(response)
 
         # Handle nested project data
@@ -410,8 +324,8 @@ class ThreadsClient:
             MessagesResponse containing all messages
         """
         params = {"order": order}
-        response = await self.client.get(
-            f"/threads/{thread_id}/messages", params=params
+        response = await self._request_with_retry(
+            "GET", f"/threads/{thread_id}/messages", params=params
         )
         data = self._handle_response(response)
 
@@ -429,10 +343,13 @@ class ThreadsClient:
             The created message
         """
         # This endpoint expects form data, not JSON
-        response = await self.client.post(
+        # Remove Content-Type for form data endpoint
+        headers = {k: v for k, v in self.headers.items() if k != "Content-Type"}
+        response = await self._request_with_retry(
+            "POST",
             f"/threads/{thread_id}/messages/add",
             params={"message": message},
-            headers={k: v for k, v in self.headers.items() if k != "Content-Type"},
+            headers=headers,
         )
         data = self._handle_response(response)
         return from_dict(Message, data)
@@ -447,8 +364,8 @@ class ThreadsClient:
         Returns:
             None
         """
-        response = await self.client.delete(
-            f"/threads/{thread_id}/messages/{message_id}"
+        response = await self._request_with_retry(
+            "DELETE", f"/threads/{thread_id}/messages/{message_id}"
         )
         self._handle_response(response)
 
@@ -464,8 +381,8 @@ class ThreadsClient:
         Returns:
             The created message
         """
-        response = await self.client.post(
-            f"/threads/{thread_id}/messages", json=to_dict(request)
+        response = await self._request_with_retry(
+            "POST", f"/threads/{thread_id}/messages", json=to_dict(request, exclude_none=False)
         )
         data = self._handle_response(response)
         return from_dict(Message, data)
@@ -479,17 +396,31 @@ class ThreadsClient:
         Returns:
             CreateThreadResponse containing the new thread ID and project ID
         """
-        data = None if name is None else {"name": name}
-        response = await self.client.post(
+        # Remove Content-Type for form data endpoint
+        headers = {k: v for k, v in self.headers.items() if k != "Content-Type"}
+        form_data = None if name is None else {"name": name}
+        response = await self._request_with_retry(
+            "POST",
             "/threads",
-            data=data,
-            headers={k: v for k, v in self.headers.items() if k != "Content-Type"},
+            data=form_data,
+            headers=headers,
         )
         data = self._handle_response(response)
         return from_dict(CreateThreadResponse, data)
 
     async def delete_thread(self, thread_id: str) -> None:
-        raise NotImplementedError("Not implemented")
+        """Delete a thread.
+        
+        Note: This endpoint is not currently implemented in the backend API.
+        This method is kept for API compatibility but will raise NotImplementedError.
+        
+        Args:
+            thread_id: The thread ID to delete
+            
+        Raises:
+            NotImplementedError: Thread deletion is not supported by the backend API
+        """
+        raise NotImplementedError("Thread deletion is not implemented in the backend API")
 
     async def get_thread_agent(self, thread_id: str) -> ThreadAgentResponse:
         """Get the agent details for a specific thread.
@@ -500,7 +431,7 @@ class ThreadsClient:
         Returns:
             ThreadAgentResponse with agent details and source information
         """
-        response = await self.client.get(f"/thread/{thread_id}/agent")
+        response = await self._request_with_retry("GET", f"/thread/{thread_id}/agent")
         data = self._handle_response(response)
 
         agent_data = None
@@ -523,8 +454,8 @@ class ThreadsClient:
         Returns:
             AgentStartResponse with agent run ID and status
         """
-        response = await self.client.post(
-            f"/thread/{thread_id}/agent/start", json=to_dict(request)
+        response = await self._request_with_retry(
+            "POST", f"/thread/{thread_id}/agent/start", json=to_dict(request, exclude_none=False)
         )
         data = self._handle_response(response)
         return from_dict(AgentStartResponse, data)
@@ -538,7 +469,7 @@ class ThreadsClient:
         Returns:
             Status response
         """
-        response = await self.client.post(f"/agent-run/{agent_run_id}/stop")
+        response = await self._request_with_retry("POST", f"/agent-run/{agent_run_id}/stop")
         data = self._handle_response(response)
         return data
 

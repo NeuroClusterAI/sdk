@@ -50,6 +50,7 @@ class AgentPressTools(str, Enum):
     SB_DEPLOY_TOOL = "sb_deploy_tool"
     SB_EXPOSE_TOOL = "sb_expose_tool"
     SB_VISION_TOOL = "sb_vision_tool"
+    SB_IMAGE_EDIT_TOOL = "sb_image_edit_tool"
     BROWSER_TOOL = "browser_tool"
     WEB_SEARCH_TOOL = "web_search_tool"
     DATA_PROVIDERS_TOOL = "data_providers_tool"

@@ -1,14 +1,13 @@
 from .api.threads import AgentStartRequest
 from .thread import Thread, AgentRun
-from .tools import AgentPressTools, MCPTools, NeuroClusterTools
+from .tools import NeuroClusterTools
 from .api.agents import (
     AgentCreateRequest,
-    AgentPress_ToolConfig,
     AgentUpdateRequest,
     AgentsClient,
     CustomMCP,
-    MCPConfig,
 )
+from .tool_utils import process_mcp_tools, filter_existing_tools
 
 
 class Agent:
@@ -28,45 +27,30 @@ class Agent:
         system_prompt: str | None = None,
         mcp_tools: list[NeuroClusterTools] | None = None,
         allowed_tools: list[str] | None = None,
+        configured_mcps: list[CustomMCP] | None = None,
+        replace_mcps: bool | None = None,
     ):
         if mcp_tools:
-            agentpress_tools = {} if mcp_tools else None
-            custom_mcps: list[CustomMCP] = [] if mcp_tools else None
-            for tool in mcp_tools:
-                if isinstance(tool, AgentPressTools):
-                    is_enabled = tool.name in allowed_tools if allowed_tools else True
-                    agentpress_tools[tool] = AgentPress_ToolConfig(
-                        enabled=is_enabled, description=tool.get_description()
-                    )
-                elif isinstance(tool, MCPTools):
-                    mcp = tool
-                    is_enabled = tool.name in allowed_tools if allowed_tools else True
-                    custom_mcps.append(
-                        CustomMCP(
-                            name=mcp.name,
-                            type=mcp.type,
-                            config=MCPConfig(url=mcp.url),
-                            enabled_tools=mcp.enabled_tools if is_enabled else [],
-                        )
-                    )
+            # Process new tools from scratch
+            agentpress_tools, custom_mcps = process_mcp_tools(mcp_tools, allowed_tools)
         else:
+            # Update existing tools - fetch current config and filter
             agent_details = await self.details()
             agentpress_tools = agent_details.agentpress_tools
+            configured_mcps = agent_details.configured_mcps if configured_mcps is None else configured_mcps
             custom_mcps = agent_details.custom_mcps
             if allowed_tools:
-                for tool in agentpress_tools:
-                    if tool.name not in allowed_tools:
-                        agentpress_tools[tool].enabled = False
-                for mcp in custom_mcps:
-                    mcp.enabled_tools = allowed_tools
+                filter_existing_tools(agentpress_tools, custom_mcps, allowed_tools)
 
         await self._client.update_agent(
             self._agent_id,
             AgentUpdateRequest(
                 name=name,
                 system_prompt=system_prompt,
+                configured_mcps=configured_mcps,
                 custom_mcps=custom_mcps,
                 agentpress_tools=agentpress_tools,
+                replace_mcps=replace_mcps,
             ),
         )
 
@@ -79,6 +63,7 @@ class Agent:
         prompt: str,
         thread: Thread,
         model: str | None = None,
+        enable_prompt_caching: bool | None = None,
     ):
         await thread.add_message(prompt)
         response = await thread._client.start_agent(
@@ -86,6 +71,7 @@ class Agent:
             AgentStartRequest(
                 agent_id=self._agent_id,
                 model_name=model or self._model,
+                enable_prompt_caching=enable_prompt_caching,
             ),
         )
         return AgentRun(thread, response.agent_run_id)
@@ -99,35 +85,20 @@ class NeuroClusterAgent:
         self,
         name: str,
         system_prompt: str,
-        mcp_tools: list[NeuroClusterTools] = [],
+        mcp_tools: list[NeuroClusterTools] | None = None,
         allowed_tools: list[str] | None = None,
+        configured_mcps: list[CustomMCP] | None = None,
     ) -> Agent:
-        agentpress_tools = {}
-        custom_mcps: list[CustomMCP] = []
-        for tool in mcp_tools:
-            if isinstance(tool, AgentPressTools):
-                is_enabled = tool.name in allowed_tools if allowed_tools else True
-                agentpress_tools[tool] = AgentPress_ToolConfig(
-                    enabled=is_enabled, description=tool.get_description()
-                )
-            elif isinstance(tool, MCPTools):
-                mcp = tool
-                is_enabled = tool.name in allowed_tools if allowed_tools else True
-                custom_mcps.append(
-                    CustomMCP(
-                        name=mcp.name,
-                        type=mcp.type,
-                        config=MCPConfig(url=mcp.url),
-                        enabled_tools=mcp.enabled_tools if is_enabled else [],
-                    )
-                )
-            else:
-                raise ValueError(f"Unknown tool type: {type(tool)}")
+        if mcp_tools is None:
+            mcp_tools = []
+        
+        agentpress_tools, custom_mcps = process_mcp_tools(mcp_tools, allowed_tools)
 
         agent = await self._client.create_agent(
             AgentCreateRequest(
                 name=name,
                 system_prompt=system_prompt,
+                configured_mcps=configured_mcps,
                 custom_mcps=custom_mcps,
                 agentpress_tools=agentpress_tools,
             )

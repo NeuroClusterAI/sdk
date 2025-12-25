@@ -4,6 +4,9 @@ from dataclasses import dataclass, asdict
 import json
 
 from ..tools import AgentPressTools
+from .base_client import BaseAPIClient
+from .serialization import to_dict as base_to_dict, from_dict as base_from_dict
+from .constants import APIHeaders
 
 
 @dataclass
@@ -30,6 +33,7 @@ class AgentCreateRequest:
     name: str
     system_prompt: str
     description: Optional[str] = None
+    configured_mcps: Optional[List[CustomMCP]] = None
     custom_mcps: Optional[List[CustomMCP]] = None
     agentpress_tools: Optional[Dict[AgentPressTools, AgentPress_ToolConfig]] = None
     is_default: bool = False
@@ -44,6 +48,7 @@ class AgentUpdateRequest:
     name: Optional[str] = None
     description: Optional[str] = None
     system_prompt: Optional[str] = None
+    configured_mcps: Optional[List[CustomMCP]] = None
     custom_mcps: Optional[List[CustomMCP]] = None
     agentpress_tools: Optional[Dict[AgentPressTools, AgentPress_ToolConfig]] = None
     is_default: Optional[bool] = None
@@ -51,6 +56,7 @@ class AgentUpdateRequest:
     icon_name: Optional[str] = None
     icon_color: Optional[str] = None
     icon_background: Optional[str] = None
+    replace_mcps: Optional[bool] = None
 
 
 @dataclass
@@ -73,11 +79,13 @@ class AgentVersionResponse:
     version_number: int
     version_name: str
     system_prompt: str
+    configured_mcps: List[CustomMCP]
     custom_mcps: List[CustomMCP]
     agentpress_tools: Dict[AgentPressTools, AgentPress_ToolConfig]
     is_active: bool
     created_at: str
     updated_at: str
+    model: Optional[str] = None
     created_by: Optional[str] = None
 
 
@@ -87,6 +95,7 @@ class AgentResponse:
     account_id: str
     name: str
     system_prompt: str
+    configured_mcps: List[CustomMCP]
     custom_mcps: List[CustomMCP]
     agentpress_tools: Dict[AgentPressTools, AgentPress_ToolConfig]
     is_default: bool
@@ -199,113 +208,187 @@ class DeleteAgentResponse:
     message: str
 
 
-# Helper function to convert dataclass to dict for JSON serialization
-def to_dict(obj) -> Dict[str, Any]:
-    """Convert dataclass to dict, excluding None values"""
-    if hasattr(obj, "__dataclass_fields__"):
-        return {k: v for k, v in asdict(obj).items() if v is not None}
-    return obj
+@dataclass
+class AgentIconGenerationRequest:
+    name: str
+    description: Optional[str] = None
 
 
-# Helper function to create dataclass from dict
-def from_dict(cls, data: Dict[str, Any]):
-    """Create dataclass instance from dict"""
-    if not data:
-        return None
-
-    # Handle nested objects
-    if cls == AgentsResponse:
-        agents = [from_dict(AgentResponse, agent) for agent in data.get("agents", [])]
-        pagination = from_dict(PaginationInfo, data.get("pagination", {}))
-        return cls(agents=agents, pagination=pagination)
-
-    elif cls == AgentResponse:
-        current_version = None
-        if data.get("current_version"):
-            current_version = from_dict(AgentVersionResponse, data["current_version"])
-
-        # Handle custom_mcps conversion
-        custom_mcps = []
-        if data.get("custom_mcps"):
-            custom_mcps = [from_dict(CustomMCP, mcp) for mcp in data["custom_mcps"]]
-
-        # Create a copy of data without nested objects for the main object
-        agent_data = {
-            k: v for k, v in data.items() if k not in ["current_version", "custom_mcps"]
-        }
-        agent_data["current_version"] = current_version
-        agent_data["custom_mcps"] = custom_mcps
-        agent_data["tags"] = agent_data.get("tags", [])
-
-        return cls(
-            **{k: v for k, v in agent_data.items() if k in cls.__dataclass_fields__}
-        )
-
-    elif cls == AgentToolsResponse:
-        agentpress_tools = [
-            from_dict(AgentTool, tool) for tool in data.get("agentpress_tools", [])
-        ]
-        mcp_tools = [from_dict(AgentTool, tool) for tool in data.get("mcp_tools", [])]
-        return cls(agentpress_tools=agentpress_tools, mcp_tools=mcp_tools)
-
-    elif cls == PipedreamToolsResponse:
-        tools = [from_dict(PipedreamTool, tool) for tool in data.get("tools", [])]
-        return cls(
-            profile_id=data["profile_id"],
-            app_name=data["app_name"],
-            profile_name=data["profile_name"],
-            tools=tools,
-            has_mcp_config=data["has_mcp_config"],
-            error=data.get("error"),
-        )
-
-    elif cls == CustomMCPToolsResponse:
-        tools = [from_dict(CustomMCPTool, tool) for tool in data.get("tools", [])]
-        return cls(
-            tools=tools,
-            has_mcp_config=data["has_mcp_config"],
-            server_type=data["server_type"],
-            server_url=data["server_url"],
-        )
-
-    elif cls == AgentBuilderChatHistoryResponse:
-        messages = [
-            from_dict(AgentBuilderChatMessage, msg) for msg in data.get("messages", [])
-        ]
-        return cls(messages=messages, thread_id=data.get("thread_id"))
-
-    elif cls == CustomMCP:
-        # Handle nested MCPConfig conversion
-        config_data = data.get("config", {})
-        # Ensure we always have a valid MCPConfig object
-        if isinstance(config_data, dict):
-            # Provide default url if missing
-            if "url" not in config_data:
-                config_data["url"] = ""
-            config = from_dict(MCPConfig, config_data)
-        else:
-            # Fallback to empty MCPConfig if config is not a dict
-            config = MCPConfig(url="")
-
-        # Create a copy without config for the main object
-        mcp_data = {k: v for k, v in data.items() if k != "config"}
-        mcp_data["config"] = config
-
-        return cls(
-            **{k: v for k, v in mcp_data.items() if k in cls.__dataclass_fields__}
-        )
-
-    # For simple dataclasses, filter fields that exist in the class
-    if hasattr(cls, "__dataclass_fields__"):
-        filtered_data = {k: v for k, v in data.items() if k in cls.__dataclass_fields__}
-        return cls(**filtered_data)
-
-    return data
+@dataclass
+class AgentIconGenerationResponse:
+    icon_name: str
+    icon_color: str
+    icon_background: str
 
 
-class AgentsClient:
+@dataclass
+class AgentExportData:
+    name: str
+    system_prompt: str
+    agentpress_tools: Dict[str, Any]
+    configured_mcps: List[Dict[str, Any]]
+    custom_mcps: List[Dict[str, Any]]
+    exported_at: str
+    description: Optional[str] = None
+    profile_image_url: Optional[str] = None
+    tags: Optional[List[str]] = None
+    metadata: Optional[Dict[str, Any]] = None
+    export_version: str = "1.1"
+    exported_by: Optional[str] = None
+
+
+@dataclass
+class JsonAnalysisRequest:
+    json_data: Dict[str, Any]
+
+
+@dataclass
+class JsonAnalysisResponse:
+    requires_setup: bool
+    missing_regular_credentials: List[Dict[str, Any]]
+    missing_custom_configs: List[Dict[str, Any]]
+    agent_info: Dict[str, Any]
+
+
+@dataclass
+class JsonImportRequestModel:
+    json_data: Dict[str, Any]
+    instance_name: Optional[str] = None
+    custom_system_prompt: Optional[str] = None
+    profile_mappings: Optional[Dict[str, str]] = None
+    custom_mcp_configs: Optional[Dict[str, Dict[str, Any]]] = None
+
+
+@dataclass
+class JsonImportResponse:
+    status: str
+    instance_id: Optional[str] = None
+    name: Optional[str] = None
+    missing_regular_credentials: Optional[List[Dict[str, Any]]] = None
+    missing_custom_configs: Optional[List[Dict[str, Any]]] = None
+    agent_info: Optional[Dict[str, Any]] = None
+
+
+# Use shared serialization utilities
+to_dict = base_to_dict
+from_dict = base_from_dict
+
+# Import registry decorator
+from .serialization import register_from_dict
+
+
+# Register custom handlers for agents-specific types
+@register_from_dict(AgentsResponse)
+def _from_dict_agents_response(data: Dict[str, Any]) -> AgentsResponse:
+    """Custom handler for AgentsResponse with nested agents list."""
+    agents = [from_dict(AgentResponse, agent) for agent in data.get("agents", [])]
+    pagination = from_dict(PaginationInfo, data.get("pagination", {}))
+    return AgentsResponse(agents=agents, pagination=pagination)
+
+
+@register_from_dict(AgentResponse)
+def _from_dict_agent_response(data: Dict[str, Any]) -> AgentResponse:
+    """Custom handler for AgentResponse with nested version and MCP configs."""
+    current_version = None
+    if data.get("current_version"):
+        current_version = from_dict(AgentVersionResponse, data["current_version"])
+
+    # Handle configured_mcps conversion
+    configured_mcps = []
+    if data.get("configured_mcps"):
+        configured_mcps = [from_dict(CustomMCP, mcp) for mcp in data["configured_mcps"]]
+
+    # Handle custom_mcps conversion
+    custom_mcps = []
+    if data.get("custom_mcps"):
+        custom_mcps = [from_dict(CustomMCP, mcp) for mcp in data["custom_mcps"]]
+
+    # Create a copy of data without nested objects for the main object
+    agent_data = {
+        k: v for k, v in data.items() if k not in ["current_version", "configured_mcps", "custom_mcps"]
+    }
+    agent_data["current_version"] = current_version
+    agent_data["configured_mcps"] = configured_mcps
+    agent_data["custom_mcps"] = custom_mcps
+    agent_data["tags"] = agent_data.get("tags", [])
+
+    return AgentResponse(
+        **{k: v for k, v in agent_data.items() if k in AgentResponse.__dataclass_fields__}
+    )
+
+
+@register_from_dict(AgentToolsResponse)
+def _from_dict_agent_tools_response(data: Dict[str, Any]) -> AgentToolsResponse:
+    """Custom handler for AgentToolsResponse with nested tool lists."""
+    agentpress_tools = [
+        from_dict(AgentTool, tool) for tool in data.get("agentpress_tools", [])
+    ]
+    mcp_tools = [from_dict(AgentTool, tool) for tool in data.get("mcp_tools", [])]
+    return AgentToolsResponse(agentpress_tools=agentpress_tools, mcp_tools=mcp_tools)
+
+
+@register_from_dict(PipedreamToolsResponse)
+def _from_dict_pipedream_tools_response(data: Dict[str, Any]) -> PipedreamToolsResponse:
+    """Custom handler for PipedreamToolsResponse with nested tools."""
+    tools = [from_dict(PipedreamTool, tool) for tool in data.get("tools", [])]
+    return PipedreamToolsResponse(
+        profile_id=data["profile_id"],
+        app_name=data["app_name"],
+        profile_name=data["profile_name"],
+        tools=tools,
+        has_mcp_config=data["has_mcp_config"],
+        error=data.get("error"),
+    )
+
+
+@register_from_dict(CustomMCPToolsResponse)
+def _from_dict_custom_mcp_tools_response(data: Dict[str, Any]) -> CustomMCPToolsResponse:
+    """Custom handler for CustomMCPToolsResponse with nested tools."""
+    tools = [from_dict(CustomMCPTool, tool) for tool in data.get("tools", [])]
+    return CustomMCPToolsResponse(
+        tools=tools,
+        has_mcp_config=data["has_mcp_config"],
+        server_type=data["server_type"],
+        server_url=data["server_url"],
+    )
+
+
+@register_from_dict(AgentBuilderChatHistoryResponse)
+def _from_dict_agent_builder_chat_history(data: Dict[str, Any]) -> AgentBuilderChatHistoryResponse:
+    """Custom handler for AgentBuilderChatHistoryResponse with nested messages."""
+    messages = [
+        from_dict(AgentBuilderChatMessage, msg) for msg in data.get("messages", [])
+    ]
+    return AgentBuilderChatHistoryResponse(messages=messages, thread_id=data.get("thread_id"))
+
+
+@register_from_dict(CustomMCP)
+def _from_dict_custom_mcp(data: Dict[str, Any]) -> CustomMCP:
+    """Custom handler for CustomMCP with nested MCPConfig."""
+    # Handle nested MCPConfig conversion
+    config_data = data.get("config", {})
+    # Ensure we always have a valid MCPConfig object
+    if isinstance(config_data, dict):
+        # Provide default url if missing
+        if "url" not in config_data:
+            config_data["url"] = ""
+        config = from_dict(MCPConfig, config_data)
+    else:
+        # Fallback to empty MCPConfig if config is not a dict
+        config = MCPConfig(url="")
+
+    # Create a copy without config for the main object
+    mcp_data = {k: v for k, v in data.items() if k != "config"}
+    mcp_data["config"] = config
+
+    return CustomMCP(
+        **{k: v for k, v in mcp_data.items() if k in CustomMCP.__dataclass_fields__}
+    )
+
+
+class AgentsClient(BaseAPIClient):
     """SDK client for NeuroCluster Agents API with httpx client supporting custom headers"""
-
+    
     def __init__(
         self,
         base_url: str,
@@ -322,54 +405,7 @@ class AgentsClient:
             custom_headers: Additional headers to include in all requests
             timeout: Request timeout in seconds
         """
-        self.base_url = base_url.rstrip("/")
-        self.timeout = timeout
-
-        # Build default headers
-        default_headers = {
-            "Content-Type": "application/json",
-            "Accept": "application/json",
-        }
-
-        # Add auth token if provided
-        if auth_token:
-            default_headers["X-API-Key"] = auth_token
-
-        # Merge with custom headers
-        if custom_headers:
-            default_headers.update(custom_headers)
-
-        # Create httpx client with configured headers and timeout
-        self.client = httpx.AsyncClient(
-            headers=default_headers, timeout=timeout, base_url=self.base_url
-        )
-
-    async def close(self):
-        """Close the httpx client"""
-        await self.client.aclose()
-
-    async def __aenter__(self):
-        return self
-
-    async def __aexit__(self, exc_type, exc_val, exc_tb):
-        await self.close()
-
-    # Helper method for handling API responses
-    def _handle_response(self, response: httpx.Response) -> Dict[str, Any]:
-        """Handle API response and raise appropriate exceptions"""
-        if response.status_code >= 400:
-            try:
-                error_detail = response.json().get(
-                    "detail", f"HTTP {response.status_code}"
-                )
-            except:
-                error_detail = f"HTTP {response.status_code}"
-            raise httpx.HTTPStatusError(
-                f"API request failed: {error_detail}",
-                request=response.request,
-                response=response,
-            )
-        return response.json()
+        super().__init__(base_url, auth_token, custom_headers, timeout)
 
     # Agents CRUD operations
 
@@ -421,7 +457,7 @@ class AgentsClient:
         if tools:
             params["tools"] = tools
 
-        response = await self.client.get("/agents", params=params)
+        response = await self._request_with_retry("GET", "/agents", params=params)
         data = self._handle_response(response)
         return from_dict(AgentsResponse, data)
 
@@ -435,7 +471,7 @@ class AgentsClient:
         Returns:
             AgentResponse with current version information
         """
-        response = await self.client.get(f"/agents/{agent_id}")
+        response = await self._request_with_retry("GET", f"/agents/{agent_id}")
         data = self._handle_response(response)
         return from_dict(AgentResponse, data)
 
@@ -449,7 +485,7 @@ class AgentsClient:
         Returns:
             Created AgentResponse
         """
-        response = await self.client.post("/agents", json=to_dict(request))
+        response = await self._request_with_retry("POST", "/agents", json=to_dict(request))
         data = self._handle_response(response)
         return from_dict(AgentResponse, data)
 
@@ -466,7 +502,7 @@ class AgentsClient:
         Returns:
             Updated AgentResponse
         """
-        response = await self.client.put(f"/agents/{agent_id}", json=to_dict(request))
+        response = await self._request_with_retry("PUT", f"/agents/{agent_id}", json=to_dict(request))
         data = self._handle_response(response)
         return from_dict(AgentResponse, data)
 
@@ -480,7 +516,7 @@ class AgentsClient:
         Returns:
             DeleteAgentResponse with confirmation message
         """
-        response = await self.client.delete(f"/agents/{agent_id}")
+        response = await self._request_with_retry("DELETE", f"/agents/{agent_id}")
         data = self._handle_response(response)
         return from_dict(DeleteAgentResponse, data)
 
@@ -496,7 +532,7 @@ class AgentsClient:
         Returns:
             AgentToolsResponse containing agentpress_tools and mcp_tools lists
         """
-        response = await self.client.get(f"/agents/{agent_id}/tools")
+        response = await self._request_with_retry("GET", f"/agents/{agent_id}/tools")
         data = self._handle_response(response)
         return from_dict(AgentToolsResponse, data)
 
@@ -504,8 +540,6 @@ class AgentsClient:
         self, agent_id: str, profile_id: str, version: Optional[str] = None
     ) -> PipedreamToolsResponse:
         """
-        [WARNING] This endpoint is not implemented.
-
         Get Pipedream tools for an agent profile
 
         Args:
@@ -516,13 +550,12 @@ class AgentsClient:
         Returns:
             PipedreamToolsResponse containing profile info and available tools
         """
-        raise Exception("TODO: unimplemented")
         params = {}
         if version:
             params["version"] = version
 
-        response = await self.client.get(
-            f"/agents/{agent_id}/pipedream-tools/{profile_id}", params=params
+        response = await self._request_with_retry(
+            "GET", f"/agents/{agent_id}/pipedream-tools/{profile_id}", params=params
         )
         data = self._handle_response(response)
         return from_dict(PipedreamToolsResponse, data)
@@ -531,8 +564,6 @@ class AgentsClient:
         self, agent_id: str, profile_id: str, request: PipedreamToolsUpdateRequest
     ) -> PipedreamToolsUpdateResponse:
         """
-        [WARNING] This endpoint is not implemented.
-
         Update Pipedream tools for an agent profile
 
         Args:
@@ -543,9 +574,8 @@ class AgentsClient:
         Returns:
             PipedreamToolsUpdateResponse with update result
         """
-        raise Exception("TODO: unimplemented")
-        response = await self.client.put(
-            f"/agents/{agent_id}/pipedream-tools/{profile_id}", json=to_dict(request)
+        response = await self._request_with_retry(
+            "PUT", f"/agents/{agent_id}/pipedream-tools/{profile_id}", json=to_dict(request)
         )
         data = self._handle_response(response)
         return from_dict(PipedreamToolsUpdateResponse, data)
@@ -569,13 +599,13 @@ class AgentsClient:
         Returns:
             CustomMCPToolsResponse containing available tools and server info
         """
-        request_headers = {"X-MCP-URL": mcp_url, "X-MCP-Type": mcp_type}
+        request_headers = {APIHeaders.MCP_URL: mcp_url, APIHeaders.MCP_TYPE: mcp_type}
 
         if headers:
-            request_headers["X-MCP-Headers"] = json.dumps(headers)
+            request_headers[APIHeaders.MCP_HEADERS] = json.dumps(headers)
 
-        response = await self.client.get(
-            f"/agents/{agent_id}/custom-mcp-tools", headers=request_headers
+        response = await self._request_with_retry(
+            "GET", f"/agents/{agent_id}/custom-mcp-tools", headers=request_headers
         )
         data = self._handle_response(response)
         return from_dict(CustomMCPToolsResponse, data)
@@ -593,8 +623,8 @@ class AgentsClient:
         Returns:
             CustomMCPToolsUpdateResponse with update result
         """
-        response = await self.client.post(
-            f"/agents/{agent_id}/custom-mcp-tools", json=to_dict(request)
+        response = await self._request_with_retry(
+            "POST", f"/agents/{agent_id}/custom-mcp-tools", json=to_dict(request)
         )
         data = self._handle_response(response)
         return from_dict(CustomMCPToolsUpdateResponse, data)
@@ -613,9 +643,73 @@ class AgentsClient:
         Returns:
             AgentBuilderChatHistoryResponse containing messages and thread_id
         """
-        response = await self.client.get(f"/agents/{agent_id}/builder-chat-history")
+        response = await self._request_with_retry("GET", f"/agents/{agent_id}/builder-chat-history")
         data = self._handle_response(response)
         return from_dict(AgentBuilderChatHistoryResponse, data)
+
+    async def generate_icon(
+        self, request: AgentIconGenerationRequest
+    ) -> AgentIconGenerationResponse:
+        """
+        Generate an appropriate icon and colors for an agent based on its name and description
+
+        Args:
+            request: AgentIconGenerationRequest with agent name and optional description
+
+        Returns:
+            AgentIconGenerationResponse with generated icon_name, icon_color, and icon_background
+        """
+        response = await self._request_with_retry("POST", "/agents/generate-icon", json=to_dict(request))
+        data = self._handle_response(response)
+        return from_dict(AgentIconGenerationResponse, data)
+
+    # Export/Import functionality
+
+    async def export_agent(self, agent_id: str) -> AgentExportData:
+        """
+        Export an agent configuration as JSON
+
+        Args:
+            agent_id: Agent identifier
+
+        Returns:
+            AgentExportData with agent configuration
+        """
+        response = await self._request_with_retry("GET", f"/agents/{agent_id}/export")
+        data = self._handle_response(response)
+        return from_dict(AgentExportData, data)
+
+    async def analyze_json(
+        self, request: JsonAnalysisRequest
+    ) -> JsonAnalysisResponse:
+        """
+        Analyze imported JSON to determine required credentials and configurations
+
+        Args:
+            request: JsonAnalysisRequest with JSON data to analyze
+
+        Returns:
+            JsonAnalysisResponse with analysis results and missing requirements
+        """
+        response = await self._request_with_retry("POST", "/agents/json/analyze", json=to_dict(request))
+        data = self._handle_response(response)
+        return from_dict(JsonAnalysisResponse, data)
+
+    async def import_json(
+        self, request: JsonImportRequestModel
+    ) -> JsonImportResponse:
+        """
+        Import an agent from JSON configuration
+
+        Args:
+            request: JsonImportRequestModel with JSON data and import options
+
+        Returns:
+            JsonImportResponse with import status and agent information
+        """
+        response = await self._request_with_retry("POST", "/agents/json/import", json=to_dict(request))
+        data = self._handle_response(response)
+        return from_dict(JsonImportResponse, data)
 
 
 # Convenience function to create a client instance
@@ -645,55 +739,3 @@ def create_agents_client(
     )
 
 
-# Example usage
-"""
-# Basic usage with auth token
-client = create_agents_client(
-    base_url="https://api.neurocluster.com/api",
-    auth_token="your-jwt-token"
-)
-
-# Usage with custom headers
-client = create_agents_client(
-    base_url="https://api.neurocluster.com/api",
-    auth_token="your-jwt-token",
-    custom_headers={
-        "X-Custom-Header": "custom-value",
-        "X-API-Version": "v1"
-    }
-)
-
-# Using the client with type safety
-async with client:
-    # Get all agents
-    agents_response = await client.get_agents(page=1, limit=10, search="chatbot")
-    print(f"Found {agents_response.pagination.total} agents")
-    
-    # Get specific agent
-    agent = await client.get_agent("agent-id")
-    print(f"Agent name: {agent.name}")
-    
-    # Create new agent
-    create_request = AgentCreateRequest(
-        name="My Agent",
-        system_prompt="You are a helpful assistant",
-        description="A custom agent for my project"
-    )
-    new_agent = await client.create_agent(create_request)
-    
-    # Update agent
-    update_request = AgentUpdateRequest(
-        name="Updated Agent Name",
-        system_prompt="Updated system prompt"
-    )
-    updated_agent = await client.update_agent("agent-id", update_request)
-    
-    # Get agent tools
-    tools = await client.get_agent_tools("agent-id")
-    print(f"AgentPress tools: {len(tools.agentpress_tools)}")
-    print(f"MCP tools: {len(tools.mcp_tools)}")
-    
-    # Update Pipedream tools
-    pipedream_request = PipedreamToolsUpdateRequest(enabled_tools=["tool1", "tool2"])
-    result = await client.update_pipedream_tools("agent-id", "profile-id", pipedream_request)
-"""

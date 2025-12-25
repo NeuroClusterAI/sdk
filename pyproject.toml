@@ -1,10 +1,41 @@
 [project]
 name = "neurocluster"
-version = "0.1.0"
+version = "1.0.0"
 description = "NeuroCluster SDK"
 readme = "README.md"
 requires-python = ">=3.11"
-dependencies = ["asyncio>=3.4.3", "httpx>=0.28.1", "fastmcp>=2.10.6"]
+dependencies = ["httpx>=0.28.1", "fastmcp>=2.10.6"]
+authors = [{ name = "NeuroCluster", email = "support@neurocluster.io" }]
+license = "Apache-2.0"
+license-files = ["LICENSE"]
+keywords = ["ai", "agents", "mcp", "neurocluster", "sdk"]
+classifiers = [
+  "Development Status :: 5 - Production/Stable",
+  "Intended Audience :: Developers",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Typing :: Typed",
+]
+
+[project.urls]
+Homepage = "https://neurocluster.com"
+Documentation = "https://github.com/NeuroClusterAI/sdk"
+Repository = "https://github.com/NeuroClusterAI/sdk"
 
 [dependency-groups]
-dev = ["dotenv>=0.9.9"]
+dev = ["dotenv>=0.9.9", "pytest>=7.0.0", "pytest-asyncio>=0.21.0", "build>=1.2.1"]
+
+[project.optional-dependencies]
+dev = ["dotenv>=0.9.9", "pytest>=7.0.0", "pytest-asyncio>=0.21.0", "build>=1.2.1"]
+
+[build-system]
+requires = ["setuptools>=65.0"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+include-package-data = true
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["neurocluster*"]

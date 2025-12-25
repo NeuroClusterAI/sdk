@@ -1,6 +1,8 @@
 from dataclasses import dataclass, field
-from typing import Optional, Union, Dict, Any
+from typing import Optional, Union, Dict, Any, List
 from enum import Enum
+
+from .types import ToolCall, MessageMetadata, AgentRunError
 
 
 class Role(str, Enum):
@@ -13,7 +15,7 @@ class Role(str, Enum):
 class ContentObject:
     role: Role  # "user" | "assistant" | "system"
     content: Optional[str]
-    tool_calls: Optional[Any] = None  # Can be made stricter if needed
+    tool_calls: Optional[List[ToolCall]] = None
 
 
 class MessageType(str, Enum):
@@ -30,7 +32,7 @@ class BaseMessage:
     thread_id: str
     type: MessageType  # "user" | "assistant" | "tool" | "status" | "assistant_response_end"
     is_llm_message: bool
-    metadata: Any
+    metadata: MessageMetadata
     created_at: str
     updated_at: str
 
@@ -83,6 +85,6 @@ class AgentRun:
     status: str
     started_at: Optional[str]
     completed_at: Optional[str]
-    error: Any
+    error: Optional[AgentRunError]
     created_at: str
     updated_at: str

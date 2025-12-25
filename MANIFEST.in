@@ -1,0 +1,8 @@
+include LICENSE
+include README.md
+include CHANGELOG.md
+include TROUBLESHOOTING.md
+recursive-include neurocluster *.py
+include neurocluster/py.typed
+recursive-exclude * __pycache__
+recursive-exclude * *.py[co]
